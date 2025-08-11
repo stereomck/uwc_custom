@@ -16,9 +16,27 @@ public class Default : ScriptBase
 {
     void Execute()
     {
-        //START();
         Wait(2);
-        //STOP();
+
+        try
+        {
+            Log("=== Test 1: Search for Login button ===");
+        }
+        catch (Exception ex)
+        {
+            Log($"Error in Execute: {ex.Message}");
+            Log($"Stack trace: {ex.StackTrace}");
+        }
+    }
+    
+    private void LogResults(string searchTerm, List<OCRMatch> results)
+    {
+        Log($"Search for '{searchTerm}': Found {results.Count} matches");
+        for (int i = 0; i < results.Count; i++)
+        {
+            var match = results[i];
+            Log($"  Match {i}: '{match.Text}' at ({match.CenterX}, {match.CenterY}) confidence: {match.Confidence}");
+        }
     }
 }
 
