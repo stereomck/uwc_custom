@@ -6,8 +6,8 @@ public class Default : ScriptBase
 {
     void Execute() 
     {
-        START();
+        //START();
         Wait(2); 
-        STOP();
+        //STOP();
     }
 }
