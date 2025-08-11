@@ -2,565 +2,288 @@
 
 # Comprehensive OCR and Window Management Functions for PowerShell
 
-
-
 # Add required assemblies
-
 Add-Type -AssemblyName System.Drawing
-
 Add-Type -AssemblyName System.Windows.Forms
 
-
-
 # Load Windows Runtime assemblies for OCR
-
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
 
 $asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | ? { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' })[0]
 
-
-
 # Load Windows Runtime assemblies properly
-
 [void][Windows.ApplicationModel.Core.CoreApplication,Windows.ApplicationModel,ContentType=WindowsRuntime]
-
 [void][Windows.Storage.Streams.RandomAccessStreamReference,Windows.Storage.Streams,ContentType=WindowsRuntime]
-
 [void][Windows.Graphics.Imaging.BitmapDecoder,Windows.Graphics,ContentType=WindowsRuntime]
-
 [void][Windows.Media.Ocr.OcrEngine,Windows.Media.Ocr,ContentType=WindowsRuntime]
 
-
-
 # Add Win32 API functions for window enumeration and control
-
 Add-Type -TypeDefinition @"
-
 using System;
-
 using System.Runtime.InteropServices;
-
 using System.Text;
 
-
-
 public class Win32 {
-
     [DllImport("user32.dll")]
-
     public static extern bool SetForegroundWindow(IntPtr hWnd);
 
-    
-
     [DllImport("user32.dll")]
-
     public static extern bool SetCursorPos(int x, int y);
 
-    
-
     [DllImport("user32.dll")]
-
     public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, int dwExtraInfo);
 
-    
-
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
-
     public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
 
-    
-
     [DllImport("user32.dll")]
-
     public static extern bool EnumWindows(EnumWindowsProc enumProc, IntPtr lParam);
 
-    
-
     [DllImport("user32.dll")]
-
     public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
 
-    
-
     [DllImport("user32.dll")]
-
     public static extern bool IsWindowVisible(IntPtr hWnd);
 
-    
-
     [DllImport("user32.dll")]
-
     public static extern int GetWindowTextLength(IntPtr hWnd);
 
-    
-
     [DllImport("user32.dll")]
-
     public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
 
-    
-
     [DllImport("user32.dll")]
-
     public static extern bool IsWindowEnabled(IntPtr hWnd);
-
-    
 
     public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
-    
-
     public const uint MOUSEEVENTF_LEFTDOWN = 0x02;
-
     public const uint MOUSEEVENTF_LEFTUP = 0x04;
-
     public const uint GW_OWNER = 4;
-
 }
 
 "@
 
-
-
 # Functions
-
 Function Show-Process($Process, [Switch]$Maximize)
-
 {
-
   $sig = '
-
     [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
-
     [DllImport("user32.dll")] public static extern int SetForegroundWindow(IntPtr hwnd);
-
   '
 
-
-
   if ($Maximize) { $Mode = 3 } else { $Mode = 4 }
-
   $type = Add-Type -MemberDefinition $sig -Name WindowAPI -PassThru
-
   $hwnd = $process.MainWindowHandle
-
   $null = $type::ShowWindowAsync($hwnd, $Mode)
-
   $null = $type::SetForegroundWindow($hwnd)
-
 }
-
-
 
 Function Click-Coordinates {
-
     param(
-
         [Parameter(Mandatory=$true)]
-
         [int]$X,
 
-        
-
         [Parameter(Mandatory=$true)]
-
         [int]$Y
-
     )
-
-    
 
     # Set cursor position and click
-
     [Win32]::SetCursorPos($X, $Y)
-
     Start-Sleep -Milliseconds 50
-
     [Win32]::mouse_event([Win32]::MOUSEEVENTF_LEFTDOWN, $X, $Y, 0, 0)
-
     [Win32]::mouse_event([Win32]::MOUSEEVENTF_LEFTUP, $X, $Y, 0, 0)
-
 }
-
-
 
 Function Activate-Window {
-
     param([IntPtr]$WindowHandle)
 
-    
-
     try {
-
         [Win32]::ShowWindow($WindowHandle, [Win32]::SW_RESTORE)
-
         [Win32]::SetForegroundWindow($WindowHandle)
-
         Start-Sleep -Milliseconds 500  # Wait for window to become active
-
         return $true
-
     }
-
     catch {
-
         Write-Error "Failed to activate window: $($_.Exception.Message)"
-
         return $false
-
     }
-
 }
-
-
 
 Function Get-CurrentProcessId {
-
     <#
-
     .SYNOPSIS
-
         Gets the current PowerShell process ID
-
     .DESCRIPTION
-
         Returns the process ID of the current PowerShell session
-
     #>
-
     [CmdletBinding()]
-
     Param()
 
-    
-
     try {
-
         Write-Verbose "Getting current process ID"
-
         return $PID
-
     } catch {
-
         Write-Error "Failed to get current process ID: $($_.Exception.Message)"
-
         throw
-
     }
-
 }
 
-
-
 Function Get-ParentProcessId {
-
     <#
-
     .SYNOPSIS
-
         Gets the parent process ID for a given process
-
     .PARAMETER ProcessId
-
         The process ID to find the parent for
-
     #>
-
     [CmdletBinding()]
-
     Param(
-
         [Parameter(Mandatory=$true)]
-
         [ValidateRange(1, [int]::MaxValue)]
-
         [int]$ProcessId
-
     )
 
-    
-
     try {
-
         Write-Verbose "Getting parent process ID for PID: $ProcessId"
-
         $parentPID = (Get-WmiObject -Class Win32_Process -Filter "ProcessId=$ProcessId").ParentProcessId
-
         Write-Verbose "Parent process ID: $parentPID"
-
         return $parentPID
-
     } catch {
-
         Write-Error "Failed to get parent process ID: $($_.Exception.Message)"
-
         throw
-
     }
-
 }
 
 Function Find-MSEdgeWebView2Process {
-
     [CmdletBinding()]
-
     Param(
-
         [Parameter(Mandatory=$true)]
-
         [ValidateRange(1, [int]::MaxValue)]
-
         [int]$ParentProcessId
-
     )
 
-    
-
     try {
-
         Write-Verbose "Looking for MSEdgeWebView2 processes with parent PID: $ParentProcessId"
 
-        
-
         $webviewProcesses = @()
-
         $childProcesses = Get-WmiObject -Class Win32_Process | Where-Object { ($_.ParentProcessId -eq $ParentProcessId) -And ($_.MainWindowHandle -ne 0) }
 
-        
-
         foreach ($child in $childProcesses) {
-
             $process = Get-Process -Id $child.ProcessId -ErrorAction SilentlyContinue
-
             if ($process -and $process.ProcessName -like "*MSEdgeWebView2*") {
-
                 $webviewProcesses += $process
-
             }
-
         }
 
-        
-
         Write-Verbose "Found $($webviewProcesses.Count) MSEdgeWebView2 processes"
-
         return $webviewProcesses
-
     } catch {
-
         Write-Error "Failed to find MSEdgeWebView2 processes: $($_.Exception.Message)"
-
         throw
-
     }
-
 }
 
-
-
 Function Find-WindowByTitle {
-
     param([string]$Title)
-
-    
 
     $script:foundWindows = @()
 
-    
-
     $callback = {
-
         param($hWnd, $lParam)
 
-        
-
         if ([Win32]::IsWindowVisible($hWnd)) {
-
             $windowText = New-Object System.Text.StringBuilder 256
-
             [Win32]::GetWindowText($hWnd, $windowText, 256)
-
             $windowTitle = $windowText.ToString()
 
-            
-
             if ($windowTitle -like "*$Title*") {
-
                 $script:foundWindows += $hWnd
-
             }
-
         }
-
         return $true  # Continue enumeration
-
     }
 
-    
-
     # Call EnumWindows - return value here is BOOL success which you should ignore
-
     [void][Win32]::EnumWindows($callback, [IntPtr]::Zero)
 
-    
-
     # Return found windows
-
     return $foundWindows
-
 }
-
-
 
 Function Find-TextInImageUsingWindowsOCR {
 
     param(
-
         [Parameter(Mandatory=$true)]
-
         [string]$ImagePath,
-
         [Parameter(Mandatory=$true)]
-
         [string]$SearchText,
-
         [switch]$CaseSensitive,
-
         [string]$OutputImagePath = $null,
-
         [System.Drawing.Color]$BoundingBoxColor = [System.Drawing.Color]::Red,
-
         [int]$BoundingBoxThickness = 2,
-
         [int]$MatchIndex = -1
-
     )
 
-    
-
     try {
-
         # Validate image file exists
-
         if (-not (Test-Path $ImagePath)) {
-
             throw "Image file not found: $ImagePath"
-
         }
-
-        
 
         Write-Host "Loading image for OCR analysis: $ImagePath"
 
-        
-
         # Load Windows Runtime types
-
         Add-Type -AssemblyName System.Runtime.WindowsRuntime
-
         [Windows.Storage.StorageFile,Windows.Storage,ContentType=WindowsRuntime] | Out-Null
-
         [Windows.Media.Ocr.OcrEngine,Windows.Media.Ocr,ContentType=WindowsRuntime] | Out-Null
-
         [Windows.Graphics.Imaging.BitmapDecoder,Windows.Graphics.Imaging,ContentType=WindowsRuntime] | Out-Null
 
-        
-
         # Get AsTask method for async operations
-
-        $asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | 
-
+        $asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() |
             Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' })[0]
 
-        
-
         # Get file as StorageFile
-
         $getFileTask = [Windows.Storage.StorageFile]::GetFileFromPathAsync($ImagePath)
-
         $makeGenericAsTask = $asTaskGeneric.MakeGenericMethod([Windows.Storage.StorageFile])
-
         $fileTask = $makeGenericAsTask.Invoke($null, @($getFileTask))
-
         $storageFile = $fileTask.Result
 
-        
-
         # Open the file stream
-
         $openReadTask = $storageFile.OpenReadAsync()
-
         $makeGenericAsTask2 = $asTaskGeneric.MakeGenericMethod([Windows.Storage.Streams.IRandomAccessStreamWithContentType])
-
         $streamTask = $makeGenericAsTask2.Invoke($null, @($openReadTask))
-
         $fileStream = $streamTask.Result
 
-        
-
         # Create bitmap decoder
-
         $createDecoderTask = [Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($fileStream)
-
         $makeGenericAsTask3 = $asTaskGeneric.MakeGenericMethod([Windows.Graphics.Imaging.BitmapDecoder])
-
         $decoderTask = $makeGenericAsTask3.Invoke($null, @($createDecoderTask))
-
         $decoder = $decoderTask.Result
 
-        
-
         # Get software bitmap
-
         $getSoftwareBitmapTask = $decoder.GetSoftwareBitmapAsync()
-
         $makeGenericAsTask4 = $asTaskGeneric.MakeGenericMethod([Windows.Graphics.Imaging.SoftwareBitmap])
-
         $bitmapTask = $makeGenericAsTask4.Invoke($null, @($getSoftwareBitmapTask))
-
         $softwareBitmap = $bitmapTask.Result
 
-        
-
         # Get OCR engine for current language
-
         $ocrEngine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
-
-        
-
         if ($null -eq $ocrEngine) {
-
             throw "No OCR engine available for current language. Available languages: $([Windows.Media.Ocr.OcrEngine]::AvailableRecognizerLanguages -join ', ')"
-
         }
-
-        
 
         Write-Host "Running OCR analysis with language: $($ocrEngine.RecognizerLanguage.DisplayName)"
 
-        
-
         # Perform OCR
-
         $recognizeTask = $ocrEngine.RecognizeAsync($softwareBitmap)
-
         $makeGenericAsTask5 = $asTaskGeneric.MakeGenericMethod([Windows.Media.Ocr.OcrResult])
-
         $ocrTask = $makeGenericAsTask5.Invoke($null, @($recognizeTask))
-
         $ocrResult = $ocrTask.Result
 
-        
-
         Write-Host "OCR completed. Text angle: $($ocrResult.TextAngle)"
-
-        
 
         # Find matching text (words and phrases)
 
         $matches = @()
-
-        
 
         # If search text contains spaces, treat it as a phrase search
 
@@ -568,13 +291,9 @@ Function Find-TextInImageUsingWindowsOCR {
 
             Write-Host "Searching for phrase: '$SearchText'"
 
-            
-
             # Split the search phrase into words
 
             $searchWords = $SearchText.Split(' ', [StringSplitOptions]::RemoveEmptyEntries)
-
-            
 
             # Create a flat list of all words with their positions
 
@@ -608,8 +327,6 @@ Function Find-TextInImageUsingWindowsOCR {
 
             }
 
-            
-
             # Look for consecutive word matches that form the phrase
 
             for ($i = 0; $i -le ($allWords.Count - $searchWords.Count); $i++) {
@@ -618,15 +335,11 @@ Function Find-TextInImageUsingWindowsOCR {
 
                 $phraseWords = @()
 
-                
-
                 for ($j = 0; $j -lt $searchWords.Count; $j++) {
 
                     $currentWord = $allWords[$i + $j]
 
                     $searchWord = $searchWords[$j]
-
-                    
 
                     $wordMatch = if ($CaseSensitive) {
 
@@ -638,8 +351,6 @@ Function Find-TextInImageUsingWindowsOCR {
 
                     }
 
-                    
-
                     if (-not $wordMatch) {
 
                         $foundPhrase = $false
@@ -648,13 +359,9 @@ Function Find-TextInImageUsingWindowsOCR {
 
                     }
 
-                    
-
                     $phraseWords += $currentWord
 
                 }
-
-                
 
                 if ($foundPhrase) {
 
@@ -668,8 +375,6 @@ Function Find-TextInImageUsingWindowsOCR {
 
                     $bottomValues = $phraseWords | ForEach-Object { $_.BoundingRect.Y + $_.BoundingRect.Height }
 
-                    
-
                     $left = ($leftValues | Measure-Object -Minimum).Minimum
 
                     $top = ($topValues | Measure-Object -Minimum).Minimum
@@ -678,11 +383,7 @@ Function Find-TextInImageUsingWindowsOCR {
 
                     $bottom = ($bottomValues | Measure-Object -Maximum).Maximum
 
-                    
-
                     $phraseText = ($phraseWords | ForEach-Object { $_.Text }) -join " "
-
-                    
 
                     $matches += [PSCustomObject]@{
 
@@ -708,8 +409,6 @@ Function Find-TextInImageUsingWindowsOCR {
 
                     }
 
-                    
-
                     # Skip ahead to avoid overlapping matches
 
                     $i += $searchWords.Count - 1
@@ -724,13 +423,9 @@ Function Find-TextInImageUsingWindowsOCR {
 
             Write-Host "Searching for single word: '$SearchText'"
 
-            
-
             # Single word search (original logic)
 
             $searchPattern = if ($CaseSensitive) { "*$SearchText*" } else { "*$SearchText*" }
-
-            
 
             foreach ($line in $ocrResult.Lines) {
 
@@ -745,8 +440,6 @@ Function Find-TextInImageUsingWindowsOCR {
                         $word.Text -like $searchPattern
 
                     }
-
-                    
 
                     if ($textMatch) {
 
@@ -784,11 +477,7 @@ Function Find-TextInImageUsingWindowsOCR {
 
         }
 
-        
-
         Write-Host "Found $($matches.Count) matches for '$SearchText'"
-
-        
 
         # Filter to specific match index if requested
 
@@ -814,8 +503,6 @@ Function Find-TextInImageUsingWindowsOCR {
 
         }
 
-        
-
         # Create annotated image if requested
 
         if ($OutputImagePath -and $matches.Count -gt 0) {
@@ -826,8 +513,6 @@ Function Find-TextInImageUsingWindowsOCR {
 
                 Add-Type -AssemblyName System.Drawing
 
-                
-
                 # Load the original image
 
                 $originalImage = [System.Drawing.Image]::FromFile($ImagePath)
@@ -836,13 +521,9 @@ Function Find-TextInImageUsingWindowsOCR {
 
                 $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
 
-                
-
                 # Create pen for drawing bounding boxes
 
                 $pen = New-Object System.Drawing.Pen($BoundingBoxColor, $BoundingBoxThickness)
-
-                
 
                 # Draw bounding boxes around found text
 
@@ -851,8 +532,6 @@ Function Find-TextInImageUsingWindowsOCR {
                     $rect = New-Object System.Drawing.Rectangle($match.Left, $match.Top, $match.Width, $match.Height)
 
                     $graphics.DrawRectangle($pen, $rect)
-
-                    
 
                     # Optionally add text label above the bounding box
 
@@ -864,21 +543,15 @@ Function Find-TextInImageUsingWindowsOCR {
 
                     $graphics.DrawString($match.Text, $font, $brush, $match.Left, $labelY)
 
-                    
-
                     $font.Dispose()
 
                     $brush.Dispose()
 
                 }
 
-                
-
                 # Save the annotated image
 
                 $originalImage.Save($OutputImagePath)
-
-                
 
                 # Cleanup graphics resources
 
@@ -887,8 +560,6 @@ Function Find-TextInImageUsingWindowsOCR {
                 $graphics.Dispose()
 
                 $originalImage.Dispose()
-
-                
 
                 Write-Host "Annotated image saved to: $OutputImagePath" -ForegroundColor Green
 
@@ -902,15 +573,11 @@ Function Find-TextInImageUsingWindowsOCR {
 
         }
 
-        
-
         # Cleanup resources
 
         if ($fileStream) { $fileStream.Dispose() }
 
         if ($softwareBitmap) { $softwareBitmap.Dispose() }
-
-        
 
         return $matches
 
@@ -928,8 +595,6 @@ Function Find-TextInImageUsingWindowsOCR {
 
 }
 
-
-
 function Get-AllTextFromImage {
 
     param(
@@ -939,8 +604,6 @@ function Get-AllTextFromImage {
         [string]$ImagePath
 
     )
-
-    
 
     try {
 
@@ -954,13 +617,9 @@ function Get-AllTextFromImage {
 
         [Windows.Graphics.Imaging.BitmapDecoder,Windows.Graphics.Imaging,ContentType=WindowsRuntime] | Out-Null
 
-        
-
-        $asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | 
+        $asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() |
 
             Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' })[0]
-
-        
 
         # Process image (same as above)
 
@@ -972,8 +631,6 @@ function Get-AllTextFromImage {
 
         $storageFile = $fileTask.Result
 
-        
-
         $openReadTask = $storageFile.OpenReadAsync()
 
         $makeGenericAsTask2 = $asTaskGeneric.MakeGenericMethod([Windows.Storage.Streams.IRandomAccessStreamWithContentType])
@@ -981,8 +638,6 @@ function Get-AllTextFromImage {
         $streamTask = $makeGenericAsTask2.Invoke($null, @($openReadTask))
 
         $fileStream = $streamTask.Result
-
-        
 
         $createDecoderTask = [Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($fileStream)
 
@@ -992,8 +647,6 @@ function Get-AllTextFromImage {
 
         $decoder = $decoderTask.Result
 
-        
-
         $getSoftwareBitmapTask = $decoder.GetSoftwareBitmapAsync()
 
         $makeGenericAsTask4 = $asTaskGeneric.MakeGenericMethod([Windows.Graphics.Imaging.SoftwareBitmap])
@@ -1002,11 +655,7 @@ function Get-AllTextFromImage {
 
         $softwareBitmap = $bitmapTask.Result
 
-        
-
         $ocrEngine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
-
-        
 
         $recognizeTask = $ocrEngine.RecognizeAsync($softwareBitmap)
 
@@ -1016,21 +665,15 @@ function Get-AllTextFromImage {
 
         $ocrResult = $ocrTask.Result
 
-        
-
         # Return all text as a single string
 
         $allText = $ocrResult.Text
-
-        
 
         # Cleanup
 
         if ($fileStream) { $fileStream.Dispose() }
 
         if ($softwareBitmap) { $softwareBitmap.Dispose() }
-
-        
 
         return $allText
 
@@ -1046,13 +689,9 @@ function Get-AllTextFromImage {
 
 }
 
-
-
 function Take-Screenshot {
 
     param([string]$Path)
-
-    
 
     try {
 
@@ -1062,19 +701,13 @@ function Take-Screenshot {
 
         $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
 
-        
-
         $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
 
         $bitmap.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png)
 
-        
-
         $graphics.Dispose()
 
         $bitmap.Dispose()
-
-        
 
         Write-Host "Screenshot saved to: $Path"
 
@@ -1091,8 +724,6 @@ function Take-Screenshot {
     }
 
 }
-
-
 
 # Type text function using Windows SendInput API
 
@@ -1112,8 +743,6 @@ function Send-Text {
 
     )
 
-    
-
     try {
 
         Add-Type -TypeDefinition @"
@@ -1124,21 +753,15 @@ function Send-Text {
 
         using System.Windows.Forms;
 
-        
-
         public class KeyboardInput {
 
             [DllImport("user32.dll", SetLastError = true)]
 
             public static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
 
-            
-
             [DllImport("user32.dll")]
 
             public static extern short VkKeyScan(char ch);
-
-            
 
             [StructLayout(LayoutKind.Sequential)]
 
@@ -1150,8 +773,6 @@ function Send-Text {
 
             }
 
-            
-
             [StructLayout(LayoutKind.Explicit)]
 
             public struct INPUTUNION {
@@ -1161,8 +782,6 @@ function Send-Text {
                 public KEYBDINPUT ki;
 
             }
-
-            
 
             [StructLayout(LayoutKind.Sequential)]
 
@@ -1180,8 +799,6 @@ function Send-Text {
 
             }
 
-            
-
             public const uint INPUT_KEYBOARD = 1;
 
             public const uint KEYEVENTF_KEYUP = 0x0002;
@@ -1192,19 +809,13 @@ function Send-Text {
 
 "@ -ReferencedAssemblies System.Windows.Forms
 
-        
-
         Write-Host "Typing text: '$Text'"
-
-        
 
         # Clear existing text if requested
 
         if ($ClearFirst) {
 
             Write-Host "Clearing existing text with Ctrl+A, Delete"
-
-            
 
             # Ctrl+A to select all
 
@@ -1232,8 +843,6 @@ function Send-Text {
 
             }
 
-            
-
             $aDown = @{
 
                 type = [KeyboardInput]::INPUT_KEYBOARD
@@ -1257,8 +866,6 @@ function Send-Text {
                 }
 
             }
-
-            
 
             $aUp = @{
 
@@ -1284,8 +891,6 @@ function Send-Text {
 
             }
 
-            
-
             $ctrlUp = @{
 
                 type = [KeyboardInput]::INPUT_KEYBOARD
@@ -1310,8 +915,6 @@ function Send-Text {
 
             }
 
-            
-
             # Send Ctrl+A
 
             $inputs = @($ctrlDown, $aDown, $aUp, $ctrlUp)
@@ -1319,8 +922,6 @@ function Send-Text {
             [KeyboardInput]::SendInput($inputs.Length, $inputs, [System.Runtime.InteropServices.Marshal]::SizeOf([KeyboardInput+INPUT]))
 
             Start-Sleep -Milliseconds 50
-
-            
 
             # Send Delete
 
@@ -1348,8 +949,6 @@ function Send-Text {
 
             }
 
-            
-
             $deleteUp = @{
 
                 type = [KeyboardInput]::INPUT_KEYBOARD
@@ -1374,8 +973,6 @@ function Send-Text {
 
             }
 
-            
-
             $inputs = @($deleteDown, $deleteUp)
 
             [KeyboardInput]::SendInput($inputs.Length, $inputs, [System.Runtime.InteropServices.Marshal]::SizeOf([KeyboardInput+INPUT]))
@@ -1383,8 +980,6 @@ function Send-Text {
             Start-Sleep -Milliseconds $DelayAfterClear
 
         }
-
-        
 
         # Type each character
 
@@ -1418,8 +1013,6 @@ function Send-Text {
 
                 }
 
-                
-
                 $enterUp = @{
 
                     type = [KeyboardInput]::INPUT_KEYBOARD
@@ -1443,8 +1036,6 @@ function Send-Text {
                     }
 
                 }
-
-                
 
                 $inputs = @($enterDown, $enterUp)
 
@@ -1480,8 +1071,6 @@ function Send-Text {
 
                 }
 
-                
-
                 $tabUp = @{
 
                     type = [KeyboardInput]::INPUT_KEYBOARD
@@ -1505,8 +1094,6 @@ function Send-Text {
                     }
 
                 }
-
-                
 
                 $inputs = @($tabDown, $tabUp)
 
@@ -1542,8 +1129,6 @@ function Send-Text {
 
                 }
 
-                
-
                 $charUp = @{
 
                     type = [KeyboardInput]::INPUT_KEYBOARD
@@ -1568,15 +1153,11 @@ function Send-Text {
 
                 }
 
-                
-
                 $inputs = @($charDown, $charUp)
 
                 [KeyboardInput]::SendInput($inputs.Length, $inputs, [System.Runtime.InteropServices.Marshal]::SizeOf([KeyboardInput+INPUT]))
 
             }
-
-            
 
             if ($DelayBetweenKeys -gt 0) {
 
@@ -1585,8 +1166,6 @@ function Send-Text {
             }
 
         }
-
-        
 
         Write-Host "Text typing completed" -ForegroundColor Green
 
@@ -1599,3 +1178,4 @@ function Send-Text {
     }
 
 }
+
