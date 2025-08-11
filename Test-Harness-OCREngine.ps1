@@ -1,1 +1,0 @@
-& 'C:\Program Files\Login VSI\Universal Web Connector\engine\LoginEnterprise.Engine.Standalone.exe' script="SessionHandler.cs"
